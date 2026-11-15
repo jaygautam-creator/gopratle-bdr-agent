@@ -1,0 +1,14 @@
+{
+  "name": "gopratle-bdr-agent",
+  "version": "1.0.0",
+  "description": "BDR lead enrichment & outreach agent for GoPratle: n8n workflows backed by tested modules",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "build": "python3 scripts/build_workflows.py",
+    "enrich": "node scripts/enrich_cli.js",
+    "local": "node scripts/run_local.js"
+  },
+  "engines": { "node": ">=20" }
+}

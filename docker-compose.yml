@@ -1,0 +1,56 @@
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_HOST=${N8N_HOST:-localhost}
+      - WEBHOOK_URL=${WEBHOOK_URL:-http://localhost:5678/}
+      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Asia/Kolkata}
+      - TZ=${GENERIC_TIMEZONE:-Asia/Kolkata}
+      # Code nodes read config/secrets from env instead of hard-coding them
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - NODES_EXCLUDE=[]
+      - NODE_FUNCTION_ALLOW_BUILTIN=crypto,fs
+      - N8N_RUNNERS_ENABLED=true
+      # one production execution at a time: scheduled runs queue instead of overlapping, so two runs never claim the same lead
+      - N8N_CONCURRENCY_PRODUCTION_LIMIT=1
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - GEMINI_API_KEY
+      - GEMINI_MODEL_PRIMARY
+      - GEMINI_MODEL_FALLBACK
+      - GEMINI_MODEL_FALLBACK2
+      - TAVILY_API_KEY
+      - SERPER_API_KEY
+      - HUNTER_API_KEY
+      - TELEGRAM_BOT_TOKEN
+      - TELEGRAM_ALLOWED_CHAT_IDS
+      - STORE_BACKEND
+      - MAIL_BACKEND
+      - DATA_DIR
+      - GOOGLE_SHEET_ID
+      - GOOGLE_SERVICE_ACCOUNT_B64
+      - GMAIL_CLIENT_ID
+      - GMAIL_CLIENT_SECRET
+      - GMAIL_REFRESH_TOKEN
+      - SANDBOX_MODE
+      - SANDBOX_INBOX
+      - ALLOW_REAL_SEND
+      - FOLLOWUP_DELAY_MINUTES
+    volumes:
+      - ./n8n_data:/home/node/.n8n
+      - ./workflows:/workflows:ro
+
+  # Only needed so Telegram can push webhooks to localhost. Start with: docker compose --profile tunnel up
+  ngrok:
+    profiles: ["tunnel"]
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    command: http --domain=${NGROK_DOMAIN} n8n:5678
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    depends_on:
+      - n8n

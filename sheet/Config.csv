@@ -1,0 +1,8 @@
+key,value,description
+sandbox_mode,true,"true = every email goes to sandbox_inbox, never to the real lead"
+sandbox_inbox,,Test inbox that receives all outreach in sandbox mode
+followup_delay_minutes,2,"Demo: 2. Production: 4320 (3 days)"
+min_confidence,0.6,"Below this the lead goes to NEEDS_REVIEW instead of being sent"
+duplicate_window_days,30,Same company+city within this window is marked DUPLICATE
+max_attempts,3,Attempts before a lead is marked FAILED
+sender_name,,Name used to sign outreach emails
