@@ -34,7 +34,10 @@ The Leads table is the queue and the `status` column is the state machine.
                           |
       +-------------+-----+---------------+
       |             |                     |
-  NOT_FOUND    NEEDS_REVIEW        READY_TO_SEND --(send ok)--> SENT --(due, no reply)--> FOLLOWED_UP
+  NOT_FOUND    NEEDS_REVIEW      AWAITING_APPROVAL --(human rejects)--> REJECTED
+                    |                     |  (human approves: button or `approve LD-x`)
+                    |                     v
+                    |             READY_TO_SEND --(send ok)--> SENT --(due, no reply)--> FOLLOWED_UP
                     |  ^                  ^   |                  |
         human sets  |  | (send failed:    |   +-- retried next   +--(reply)--> REPLIED
         READY_TO_SEND  +--- stays here) --+       run, no new API calls
@@ -42,6 +45,7 @@ The Leads table is the queue and the `status` column is the state machine.
 
 * A run claims at most 2 leads (`PROCESSING`) so overlapping runs cannot grab the same row and Gemini's per-minute limit is respected.
 * `READY_TO_SEND` rows are retried **without** re-running search or the LLM, so a Gmail outage costs no quota.
+* **Approval gate:** with `REQUIRE_APPROVAL` on (default; only `false/no/off/0` disables it) a finished draft is saved as `AWAITING_APPROVAL` and never sent by a later run. Telegram shows Approve / Reject inline buttons (callback queries, polled by workflow 01). Approve moves it to `READY_TO_SEND`, and workflow 02 sends it on its next run; Reject sets `REJECTED`. Decisions are accepted only from allow-listed chats and only while the lead is waiting, so double taps are harmless.
 * `NEEDS_REVIEW` is the human-in-the-loop exit: edit the row, set status `READY_TO_SEND`, and the next run sends it.
 
 ## Enrichment pipeline (`src/pipeline.js`)

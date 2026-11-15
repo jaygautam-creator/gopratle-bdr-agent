@@ -5,7 +5,7 @@
 const R = (n) => (typeof require !== 'undefined' && typeof module !== 'undefined') ? require('./' + n + '.js') : null;
 const L = R('lib') || lib, P = R('pipeline') || pipeline, T = R('telegram') || telegram, S = R('store') || store, M = R('mailer') || mailer;
 
-const DONE_OR_ACTIVE = ['NEW', 'PROCESSING', 'READY_TO_SEND', 'SENT', 'FOLLOWED_UP', 'REPLIED', 'NEEDS_REVIEW'];
+const DONE_OR_ACTIVE = ['NEW', 'PROCESSING', 'AWAITING_APPROVAL', 'READY_TO_SEND', 'SENT', 'FOLLOWED_UP', 'REPLIED', 'NEEDS_REVIEW'];
 const STUCK_MS = 15 * 60 * 1000;
 const iso = (d) => (d || new Date()).toISOString();
 
@@ -18,18 +18,20 @@ function makeCtx({ http, env, fs, crypto, sleep }) {
 
 async function loadConfig(ctx) {
   const e = ctx.env;
-  const c = { ...S.DEFAULT_CONFIG, sandbox_mode: e.SANDBOX_MODE || 'true', sandbox_inbox: e.SANDBOX_INBOX || '', followup_delay_minutes: e.FOLLOWUP_DELAY_MINUTES || '2' };
+  const c = { ...S.DEFAULT_CONFIG, ...(e.REQUIRE_APPROVAL ? { require_approval: e.REQUIRE_APPROVAL } : {}), sandbox_mode: e.SANDBOX_MODE || 'true', sandbox_inbox: e.SANDBOX_INBOX || '', followup_delay_minutes: e.FOLLOWUP_DELAY_MINUTES || '2' };
   const sheet = await ctx.store.getConfig();
   for (const [k, v] of Object.entries(sheet)) if (String(v).trim() !== '') c[k] = String(v).trim();
   ctx.config = c;
   return c;
 }
+// Fail closed: approval is required unless explicitly switched off.
+const needsApproval = (cfg) => !/^(false|no|0|off)$/i.test(String((cfg && cfg.require_approval) == null ? 'true' : cfg.require_approval).trim());
 const adminChat = (ctx) => T.allowedChats(ctx.env)[0];
 const notifyChat = (ctx, row) => row.requested_by || adminChat(ctx);
 const ageMs = (t) => { const x = Date.parse(t); return isNaN(x) ? Infinity : Date.now() - x; };
 
 // ------------------------------------------------------------------ presentation
-const HELP = `GoPratle BDR bot. Send:\n  Find event leads for Zomato in Gurgaon\n  /lead Swiggy, Bengaluru\n  /status  (queue summary)  or  /status LD-0001\nI find the Founder/HR/Events contact, write a 3-line pitch, log it, and send the outreach (sandbox by default).`;
+const HELP = `GoPratle BDR bot. Send:\n  Find event leads for Zomato in Gurgaon\n  /lead Swiggy, Bengaluru\n  /status  (queue summary)  or  /status LD-0001\n  approve LD-0001  /  reject LD-0001\nI find the Founder/HR/Events contact, write a 3-line pitch and log it. Nothing is emailed until you approve it (sandbox by default).`;
 
 function card(row, cfg, extra) {
   const L1 = [`${row.request_id}  ${row.company} (${row.city})  ->  ${row.status}`];
@@ -47,7 +49,11 @@ function card(row, cfg, extra) {
 async function pollTelegram(ctx) {
   const offset = parseInt((await ctx.store.getMeta('tg_offset')) || '0', 10) || 0;
   const updates = await T.getUpdates(ctx, offset);
-  return updates.map((u) => ({ update_id: u.update_id, chat_id: u.message ? String(u.message.chat.id) : '', text: (u.message && u.message.text) || '', is_private: !u.message || u.message.chat.type === 'private' }));
+  return updates.map((u) => {
+    const cq = u.callback_query; // a tap on an Approve / Reject button
+    if (cq) return { update_id: u.update_id, chat_id: cq.message ? String(cq.message.chat.id) : '', text: String(cq.data || '').replace(':', ' '), is_private: !cq.message || cq.message.chat.type === 'private', callback_id: cq.id, message_id: cq.message && cq.message.message_id };
+    return { update_id: u.update_id, chat_id: u.message ? String(u.message.chat.id) : '', text: (u.message && u.message.text) || '', is_private: !u.message || u.message.chat.type === 'private' };
+  });
 }
 
 async function llmParse(ctx, text) {
@@ -74,6 +80,21 @@ async function statusReply(ctx, arg) {
   return 'Leads: ' + Object.entries(counts).map(([k, v]) => `${k} ${v}`).join(', ') + '\n\nLatest:\n' + last.join('\n');
 }
 
+// Human approval gate: only an allow-listed chat reaches here (checked in handleOne).
+async function decide(ctx, verb, id) {
+  const row = (await ctx.store.all()).find((r) => (r.request_id || '').toUpperCase() === id);
+  if (!row) return `No lead ${id}.`;
+  if (row.status !== 'AWAITING_APPROVAL') return `${id} is ${row.status || 'NEW'}, not waiting for approval. Nothing changed.`;
+  if (verb === 'reject') {
+    await ctx.store.update(id, { status: 'REJECTED', notes: 'Rejected by a human; nothing sent' });
+    await ctx.store.log({ request_id: id, step: 'approval', level: 'info', message: 'rejected by human' });
+    return `${id} ${row.company}: rejected. Nothing was sent.`;
+  }
+  await ctx.store.update(id, { status: 'READY_TO_SEND', error: '' });
+  await ctx.store.log({ request_id: id, step: 'approval', level: 'info', message: 'approved by human; queued to send' });
+  return `${id} ${row.company}: approved. Sending within about a minute.`;
+}
+
 async function handleOne(ctx, m) {
   const allowed = T.allowedChats(ctx.env);
   if (!m.text.trim()) return null;
@@ -85,6 +106,10 @@ async function handleOne(ctx, m) {
   if (/^\/(start|help)\b/i.test(text)) return { chat_id: m.chat_id, text: HELP };
   const st = /^\/status(?:@\w+)?\s*(.*)$/i.exec(text);
   if (st) return { chat_id: m.chat_id, text: await statusReply(ctx, st[1]) };
+
+  const ap = /^\/?(approve|reject)(?:@\w+)?\s+(LD-\d+)\b/i.exec(text);
+  if (ap) return { chat_id: m.chat_id, text: await decide(ctx, ap[1].toLowerCase(), ap[2].toUpperCase()) };
+  if (/^\/?(approve|reject)\b/i.test(text)) return { chat_id: m.chat_id, text: 'Say which lead, e.g.  approve LD-0005  or  reject LD-0005' };
 
   let parsed = L.parseCommand(text);
   if (!parsed) parsed = await llmParse(ctx, text);
@@ -108,7 +133,7 @@ async function handleMessages(ctx, items) {
   let maxId = -1;
   for (const m of items) {
     maxId = Math.max(maxId, m.update_id);
-    try { const r = await handleOne(ctx, m); if (r) replies.push(r); }
+    try { const r = await handleOne(ctx, m); if (r) replies.push(m.callback_id ? { ...r, callback_id: m.callback_id, message_id: m.message_id } : r); }
     catch (e) { await ctx.store.log({ step: 'telegram', level: 'error', message: e.message }).catch(() => {}); replies.push({ chat_id: m.chat_id, text: 'Something went wrong handling that. I logged it; please try again.' }); }
   }
   if (maxId >= 0) await ctx.store.setMeta('tg_offset', maxId + 1);
@@ -179,7 +204,11 @@ async function saveAndSend(ctx, item) {
     return { chat_id: null, request_id: id, status: 'NEW', text: '' }; // silent retry on the next run
   }
 
-  if (lead.status === 'READY_TO_SEND') {
+  if (lead.status === 'READY_TO_SEND' && !item.resend && needsApproval(cfg)) {
+    patch.status = 'AWAITING_APPROVAL';
+    extra = `NOT SENT. Waiting for your approval.\nTap a button below, or reply:  approve ${id}  /  reject ${id}`;
+    await ctx.store.log({ request_id: id, step: 'approval', level: 'info', message: 'draft ready; waiting for human approval' });
+  } else if (lead.status === 'READY_TO_SEND') {
     try {
       const rcpt = M.resolveRecipient(lead, cfg, ctx.env);
       const msg = M.compose(lead, 'outreach', cfg, rcpt);
@@ -198,7 +227,8 @@ async function saveAndSend(ctx, item) {
 
   await ctx.store.update(id, patch);
   const row = { ...lead, ...patch, request_id: id, company: item.company, city: item.city };
-  return { chat_id: notifyChat(ctx, item), request_id: id, status: patch.status, text: card(row, cfg, extra) };
+  const buttons = patch.status === 'AWAITING_APPROVAL' ? [[{ text: '✅ Approve & send', callback_data: 'approve:' + id }, { text: '❌ Reject', callback_data: 'reject:' + id }]] : undefined;
+  return { chat_id: notifyChat(ctx, item), request_id: id, status: patch.status, text: card(row, cfg, extra), buttons };
 }
 
 // ------------------------------------------------------------------ follow-ups
@@ -237,5 +267,5 @@ async function runFollowup(ctx, item) {
 
 const errorText = (wf, node, msg) => `ALERT: workflow "${wf}" failed at node "${node}".\n${String(msg).slice(0, 500)}`;
 
-const api = { makeCtx, loadConfig, pollTelegram, handleMessages, claimLeads, enrichItem, saveAndSend, dueFollowups, runFollowup, statusReply, card, errorText, adminChat, HELP };
+const api = { needsApproval, decide, makeCtx, loadConfig, pollTelegram, handleMessages, claimLeads, enrichItem, saveAndSend, dueFollowups, runFollowup, statusReply, card, errorText, adminChat, HELP };
 if (typeof module !== 'undefined') module.exports = api;

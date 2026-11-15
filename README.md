@@ -2,11 +2,11 @@
 
 Type `Find event leads for Zomato in Gurgaon` in Telegram (or add a *Company + City* row to a Google Sheet).
 The agent finds the Founder / HR / Events contact, finds their email, writes a tailored **3-line pitch** for
-GoPratle, logs everything back to the Sheet, sends the outreach, and schedules a **follow-up in the same thread**
-that is cancelled automatically if the lead replies.
+GoPratle, logs everything back to the Sheet, waits for **your approval** (Approve / Reject buttons in Telegram), then sends the outreach and schedules a
+**follow-up in the same thread** that is cancelled automatically if the lead replies.
 
 Built on **n8n** with a **free-tier-only** stack: Gemini (LLM), Tavily (search), Telegram, Google Sheets, Gmail.
-Sandbox mode is on by default, so nothing can reach a real lead by accident.
+Nothing is emailed without a human tap, and sandbox mode is on by default, so nothing can reach a real lead by accident.
 
 ```
 Telegram ─┐                         ┌─> Gemini  (pick contact, write pitch)
@@ -36,7 +36,9 @@ flowchart LR
   ENR --> TAV[Tavily]
   ENR --> GEM[Gemini<br/>3.5 Flash-Lite, 3.1 Flash-Lite, Gemma, template]
   ENR --> Q
-  Q -->|READY_TO_SEND| MAIL[Gmail / dry-run outbox]
+  Q -->|AWAITING_APPROVAL| HUM{Human: Approve / Reject in Telegram}
+  HUM -->|approve = READY_TO_SEND| MAIL[Gmail / dry-run outbox]
+  HUM -->|reject| REJ[REJECTED, nothing sent]
   MAIL --> Q
   Q -->|03 follow-up, every 1 min| FU{Reply in thread?}
   FU -->|yes| REP[REPLIED, stop]
@@ -44,8 +46,8 @@ flowchart LR
   ERR[99 error alerts] -.->|any failure| TG
 ```
 
-Lead status flow: `NEW -> PROCESSING -> READY_TO_SEND -> SENT -> FOLLOWED_UP | REPLIED`, with side exits
-`NEEDS_REVIEW`, `NOT_FOUND`, `DUPLICATE`, `FAILED`. Details: [docs/architecture.md](docs/architecture.md).
+Lead status flow: `NEW -> PROCESSING -> AWAITING_APPROVAL -> READY_TO_SEND -> SENT -> FOLLOWED_UP | REPLIED`, with side exits
+`REJECTED`, `NEEDS_REVIEW`, `NOT_FOUND`, `DUPLICATE`, `FAILED`. Details: [docs/architecture.md](docs/architecture.md).
 
 **Layout.** The logic lives in small, unit-tested modules in `src/` behind two swappable ports (storage and mail).
 `scripts/build_workflows.py` generates the importable n8n workflows from them, so each workflow node is a thin call
@@ -62,7 +64,7 @@ src/
 workflows/      generated n8n JSON: 01 intake, 02 processor, 03 follow-up, 99 error alerts
 sheet/          CSV templates for the Leads / Activity_log / Config tabs
 scripts/        build_workflows.py, run_local.js, enrich_cli.js, init_sheet.js, sa_to_env.py, gmail_auth.js
-tests/          66 tests, no network
+tests/          81 tests, no network
 docs/           architecture, setup, Google setup, failure modes, decisions, test report, demo script
 ```
 
@@ -72,7 +74,7 @@ docs/           architecture, setup, Google setup, failure modes, decisions, tes
 cp .env.example .env          # then fill in the keys below
 make up                       # n8n at http://localhost:5678
 make import                   # loads the 4 workflows
-make test                     # 66 tests
+make test                     # 81 tests
 ```
 
 Free keys needed: **Gemini** (aistudio.google.com/apikey), **Tavily** (tavily.com), a **Telegram bot** (@BotFather) and your chat id.
@@ -91,6 +93,7 @@ node scripts/run_local.js add "Swiggy" "Bengaluru" && node scripts/run_local.js 
 
 ## Safety and reliability (the parts worth discussing)
 
+* **Human approval before every send.** A finished draft stops at `AWAITING_APPROVAL` and Telegram shows the card with **Approve & send / Reject** buttons (or type `approve LD-0005`). Only allow-listed chats can decide; the setting fails closed (`REQUIRE_APPROVAL`). Approving the first email also covers its follow-up.
 * **Hard send lock.** `SEND_ALLOWLIST` lists the only addresses that may receive mail; the Gmail backend refuses to send at all while it is empty.
 * **Sandbox is enforced in the mailer.** Real recipients are emailed only if `SANDBOX_MODE=false` **and** `ALLOW_REAL_SEND=true`. A placeholder sandbox address is refused.
 * **No invented contacts.** A person is accepted only if their name literally appears in the fetched search text and the cited source URL is one we fetched. Guessed emails are labelled `guessed` and capped at 0.7 confidence.
@@ -104,7 +107,7 @@ All failure scenarios and their handling: [docs/failure-modes.md](docs/failure-m
 
 ## Testing
 
-`make test` runs 66 tests with fake services (no network, no quota): parsing, validation, the full pipeline and every
+`make test` runs 81 tests with fake services (no network, no quota): parsing, validation, the full pipeline and every
 fallback, the queue, sandbox rules, follow-up and reply logic, both Google adapters against an in-memory fake of the
 Sheets/Gmail/OAuth APIs (including real JWT signature verification), a vm sandbox that mimics n8n's Code node limits,
 and structural checks on the generated workflows. Live results and what is **not** yet verified against real Google:

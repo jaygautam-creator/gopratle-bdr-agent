@@ -6,3 +6,4 @@ min_confidence,0.6,"Below this the lead goes to NEEDS_REVIEW instead of being se
 duplicate_window_days,30,Same company+city within this window is marked DUPLICATE
 max_attempts,3,Attempts before a lead is marked FAILED
 sender_name,,Name used to sign outreach emails
+require_approval,true,"true = a human must reply approve LD-xxxx in Telegram before any email is sent (anything but false keeps it on)"

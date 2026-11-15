@@ -19,6 +19,7 @@ Docker Desktop must be running. If you keep Docker's data on an external drive, 
 | Tavily | https://tavily.com -> dashboard -> API key (`tvly-...`, ~1,000 free credits/month) | `TAVILY_API_KEY` |
 | Telegram bot | Telegram -> **@BotFather** -> `/newbot` -> copy the token | `TELEGRAM_BOT_TOKEN` |
 | Your chat id | Send any message to your new bot, then run the one-liner below | `TELEGRAM_ALLOWED_CHAT_IDS` (comma-separated; the first is the admin and receives error alerts) |
+| Approval gate | Nothing is emailed until you approve in Telegram (button or `approve LD-0005`). On by default | `REQUIRE_APPROVAL` (only `false` disables it) |
 | Sandbox inbox | A second Gmail address you control. All outreach is delivered here | `SANDBOX_INBOX` (a placeholder is refused) |
 | Serper (optional) | https://serper.dev, 2,500 free searches. Backup for Tavily | `SERPER_API_KEY` |
 | Hunter (optional) | https://hunter.io, ~50 free credits/month. Adds confirmed emails | `HUNTER_API_KEY` |

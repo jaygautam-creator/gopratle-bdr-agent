@@ -41,6 +41,7 @@ services:
       - ALLOW_REAL_SEND
       - SEND_ALLOWLIST
       - FOLLOWUP_DELAY_MINUTES
+      - REQUIRE_APPROVAL
     volumes:
       - ./n8n_data:/home/node/.n8n
       - ./workflows:/workflows:ro

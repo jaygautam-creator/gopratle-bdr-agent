@@ -169,3 +169,95 @@ test('overlap: two runs started back to back never claim the same lead', async (
   const ids = [...r1, ...r2].map((x) => x.request_id);
   assert.equal(new Set(ids).size, ids.length, 'a lead was claimed twice: ' + ids);
 });
+
+// ---------------------------------------------------------------- human approval gate
+const approvalCtx = () => mkCtx({ REQUIRE_APPROVAL: '' }); // unset = default = approval required
+
+test('approval: a finished draft is NOT sent; it waits in AWAITING_APPROVAL with instructions', async () => {
+  const { ctx, world } = approvalCtx();
+  world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(ctx);
+  const [r] = await runProcess(ctx);
+  assert.equal(r.status, 'AWAITING_APPROVAL'); assert.match(r.text, /NOT SENT/); assert.match(r.text, /approve LD-0001/);
+  assert.equal(fs.existsSync(ctx.store.dir + '/outbox') && fs.readdirSync(ctx.store.dir + '/outbox').length, false, 'nothing in the outbox');
+  assert.equal((await runProcess(ctx)).length, 0, 'a later run does not send it either');
+  assert.equal((await ctx.store.all())[0].status, 'AWAITING_APPROVAL');
+});
+
+test('approval: "approve LD-0001" from an allowed chat sends it, then follow-up proceeds as usual', async () => {
+  const { ctx, world } = approvalCtx();
+  world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(ctx);
+  await runProcess(ctx);
+  world.telegramUpdates.push(msg(2, 111, 'approve ld-0001'));
+  assert.match((await runIntake(ctx))[0].text, /approved/);
+  assert.equal((await ctx.store.all())[0].status, 'READY_TO_SEND');
+  const [r] = await runProcess(ctx);
+  assert.equal(r.status, 'SENT'); assert.equal(world.calls.filter((c) => /tavily|generativelanguage/.test(c)).length > 0, true);
+});
+
+test('approval: reject sends nothing and cannot be approved afterwards', async () => {
+  const { ctx, world } = approvalCtx();
+  world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(ctx); await runProcess(ctx);
+  world.telegramUpdates.push(msg(2, 111, '/reject LD-0001'), msg(3, 111, 'approve LD-0001'));
+  const [a, b] = await runIntake(ctx);
+  assert.match(a.text, /rejected/); assert.match(b.text, /not waiting for approval/);
+  assert.equal((await ctx.store.all())[0].status, 'REJECTED'); assert.equal((await runProcess(ctx)).length, 0);
+});
+
+test('approval: only allow-listed chats can approve; unknown ids and non-waiting leads change nothing', async () => {
+  const { ctx, world } = approvalCtx();
+  world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(ctx); await runProcess(ctx);
+  world.telegramUpdates.push(msg(2, 999, 'approve LD-0001'), msg(3, 111, 'approve LD-0099'), msg(4, 111, 'approve'));
+  const [x, y, z] = await runIntake(ctx);
+  assert.match(x.text, /private/); assert.match(y.text, /No lead LD-0099/); assert.match(z.text, /Say which lead/);
+  assert.equal((await ctx.store.all())[0].status, 'AWAITING_APPROVAL');
+});
+
+test('approval: fails closed (only an explicit false/no/off/0 disables it)', async () => {
+  for (const [v, want] of [['', true], ['true', true], ['garbage', true], ['false', false], ['No', false], ['off', false]]) {
+    assert.equal(A.needsApproval({ require_approval: v === '' ? undefined : v }), want, 'value ' + JSON.stringify(v));
+  }
+});
+
+// ---------------------------------------------------------------- approval buttons
+const T = require('../src/telegram.js');
+const tap = (id, chat, data, msgId = 77) => ({ update_id: id, callback_query: { id: 'cb' + id, data, message: { message_id: msgId, chat: { id: +chat, type: 'private' } } } });
+
+test('buttons: the awaiting-approval card carries Approve and Reject buttons, other cards do not', async () => {
+  const { ctx, world } = approvalCtx();
+  world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(ctx);
+  const [r] = await runProcess(ctx);
+  assert.deepEqual(r.buttons[0].map((b) => b.callback_data), ['approve:LD-0001', 'reject:LD-0001']);
+  await T.deliver(ctx, r);
+  const sent = world.telegramSent.at(-1); assert.equal(sent.reply_markup.inline_keyboard[0].length, 2);
+  const w2 = approvalCtx(); w2.world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(w2.ctx);
+  await runProcess(w2.ctx); const rep = await runIntake(w2.ctx); assert.equal(rep.length, 0);
+});
+
+test('buttons: tapping Approve approves, answers the tap and removes the buttons', async () => {
+  const { ctx, world } = approvalCtx();
+  world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(ctx); await runProcess(ctx);
+  world.telegramUpdates.push(tap(2, 111, 'approve:LD-0001'));
+  const [rep] = await runIntake(ctx);
+  assert.match(rep.text, /approved/); assert.equal(rep.callback_id, 'cb2');
+  await T.deliver(ctx, rep);
+  assert.deepEqual(world.telegramCalls.map((c) => c[0]), ['answerCallbackQuery', 'editMessageReplyMarkup']);
+  assert.deepEqual(world.telegramCalls[1][1].reply_markup, { inline_keyboard: [] });
+  assert.equal((await ctx.store.all())[0].status, 'READY_TO_SEND');
+});
+
+test('buttons: Reject works, and a tap from an unauthorised chat changes nothing', async () => {
+  const { ctx, world } = approvalCtx();
+  world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(ctx); await runProcess(ctx);
+  world.telegramUpdates.push(tap(2, 999, 'approve:LD-0001'), tap(3, 111, 'reject:LD-0001'));
+  const [bad, ok] = await runIntake(ctx);
+  assert.match(bad.text, /private/); assert.match(ok.text, /rejected/);
+  assert.equal((await ctx.store.all())[0].status, 'REJECTED');
+});
+
+test('buttons: a double tap is harmless (second one reports not waiting)', async () => {
+  const { ctx, world } = approvalCtx();
+  world.telegramUpdates.push(msg(1, 111, 'Find event leads for Acme in Gurgaon')); await runIntake(ctx); await runProcess(ctx);
+  world.telegramUpdates.push(tap(2, 111, 'approve:LD-0001'), tap(3, 111, 'approve:LD-0001'));
+  const [a, b] = await runIntake(ctx);
+  assert.match(a.text, /approved/); assert.match(b.text, /not waiting for approval/);
+});

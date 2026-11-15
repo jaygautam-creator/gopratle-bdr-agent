@@ -25,6 +25,8 @@ Rows are covered by automated tests (`make test`) and/or were observed live; tho
 | Unparseable message | Regex first, then LLM parse that must quote values literally present in the text; else help text |
 | Gmail credentials revoked | Send fails with a clear error naming the credential; the lead stays `READY_TO_SEND` (with the error in the row) and is retried every run once fixed; the requester sees 'Send failed' |
 | Sheets credentials revoked / Sheets API down | The node errors, so the error workflow alerts the admin on Telegram; nothing is lost because no state was changed |
+| Nobody answers an approval request | The lead stays `AWAITING_APPROVAL` indefinitely; it never times out into a send. `/status LD-x` shows it again |
+| Approve tapped twice, or from a stranger's chat | Second tap reports "not waiting for approval"; non-allow-listed chats are refused; nothing changes |
 | Gmail send fails | Row stays `READY_TO_SEND`; retried next run without re-spending Tavily/Gemini |
 | Reply check fails | No follow-up is sent (never follow up blindly); retried next run |
 | Lead replied before the follow-up | `REPLIED`, follow-up cancelled, human notified |

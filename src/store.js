@@ -11,12 +11,13 @@ const COLS = ['request_id', 'created_at', 'company', 'city', 'source', 'requeste
   'gmail_thread_id', 'reply_status', 'notes', 'error', 'updated_at'];
 
 const DEFAULT_CONFIG = { sandbox_mode: 'true', sandbox_inbox: '', followup_delay_minutes: '2', min_confidence: '0.6',
-  duplicate_window_days: '30', max_attempts: '3', sender_name: '' };
+  duplicate_window_days: '30', max_attempts: '3', sender_name: '', require_approval: 'true' };
 
 const CONFIG_HELP = {
   sandbox_mode: 'true = every email goes to sandbox_inbox, never to the real lead',
   sandbox_inbox: 'Test inbox that receives all outreach in sandbox mode (overrides .env if filled)',
   followup_delay_minutes: 'Demo: 2. Production: 4320 (3 days)',
+  require_approval: 'true = a human must reply approve LD-xxxx in Telegram before any email is sent (anything but false keeps it on)',
   min_confidence: 'Below this the lead goes to NEEDS_REVIEW instead of being sent',
   duplicate_window_days: 'Same company+city within this window is marked DUPLICATE',
   max_attempts: 'Attempts before a lead is marked FAILED',
