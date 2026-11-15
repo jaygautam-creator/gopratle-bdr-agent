@@ -7,6 +7,14 @@ const L = (typeof require !== 'undefined' && typeof module !== 'undefined') ? re
 const b64u = (s) => Buffer.from(s, 'utf8').toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
 const encHeader = (s) => /^[\x20-\x7e]*$/.test(s) ? s : '=?UTF-8?B?' + Buffer.from(s, 'utf8').toString('base64') + '?=';
 
+// Hard lock: when SEND_ALLOWLIST is set, nothing can be sent to any other address, whatever the mode.
+// The Gmail backend refuses to send at all unless an allow-list is configured.
+function assertAllowed(env, to, { required }) {
+  const allow = String(env.SEND_ALLOWLIST || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+  if (required && !allow.length) throw new Error('SEND_ALLOWLIST is empty: set it to your own test addresses before sending real email');
+  if (allow.length && !allow.includes(String(to).trim().toLowerCase())) throw new Error('Blocked: ' + to + ' is not in SEND_ALLOWLIST');
+}
+
 function resolveRecipient(lead, cfg, env) {
   const sandbox = String(cfg.sandbox_mode).toLowerCase() !== 'false' || String(env.ALLOW_REAL_SEND).toLowerCase() !== 'true';
   const inbox = cfg.sandbox_inbox || env.SANDBOX_INBOX;
@@ -54,6 +62,7 @@ class GmailMailer {
   }
   async me() { if (!this._me) this._me = ((await this._gm('GET', '/profile')).emailAddress || '').toLowerCase(); return this._me; }
   async send({ to, subject, body, threadId }) {
+    assertAllowed(this.ctx.env, to, { required: true });
     const from = await this.me();
     const raw = b64u(rfc822({ from, to, subject, body }));
     const d = await this._gm('POST', '/messages/send', threadId ? { raw, threadId } : { raw });
@@ -70,6 +79,7 @@ class GmailMailer {
 class DryRunMailer {
   constructor(ctx) { this.ctx = ctx; this.name = 'dryrun'; this.fs = ctx.fs || require('fs'); this.dir = (ctx.env.DATA_DIR || './n8n_data/bdr'); }
   async send({ to, subject, body, threadId, requestId }) {
+    assertAllowed(this.ctx.env, to, { required: false });
     this.fs.mkdirSync(this.dir + '/outbox', { recursive: true });
     const id = (threadId || 'dry-' + requestId);
     const n = this.fs.readdirSync(this.dir + '/outbox').filter((f) => f.startsWith(id + '__')).length + 1;
@@ -87,5 +97,5 @@ function makeMailer(ctx) {
   return new DryRunMailer(ctx);
 }
 
-const api = { resolveRecipient, compose, rfc822, b64u, GmailMailer, DryRunMailer, makeMailer };
+const api = { assertAllowed, resolveRecipient, compose, rfc822, b64u, GmailMailer, DryRunMailer, makeMailer };
 if (typeof module !== 'undefined') module.exports = api;

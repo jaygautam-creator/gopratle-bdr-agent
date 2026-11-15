@@ -61,7 +61,7 @@ src/
   agent.js      orchestration used by every workflow node
 workflows/      generated n8n JSON: 01 intake, 02 processor, 03 follow-up, 99 error alerts
 sheet/          CSV templates for the Leads / Activity_log / Config tabs
-scripts/        build_workflows.py, run_local.js, enrich_cli.js, sa_to_env.py, gmail_auth.js
+scripts/        build_workflows.py, run_local.js, enrich_cli.js, init_sheet.js, sa_to_env.py, gmail_auth.js
 tests/          66 tests, no network
 docs/           architecture, setup, Google setup, failure modes, decisions, test report, demo script
 ```
@@ -91,6 +91,7 @@ node scripts/run_local.js add "Swiggy" "Bengaluru" && node scripts/run_local.js 
 
 ## Safety and reliability (the parts worth discussing)
 
+* **Hard send lock.** `SEND_ALLOWLIST` lists the only addresses that may receive mail; the Gmail backend refuses to send at all while it is empty.
 * **Sandbox is enforced in the mailer.** Real recipients are emailed only if `SANDBOX_MODE=false` **and** `ALLOW_REAL_SEND=true`. A placeholder sandbox address is refused.
 * **No invented contacts.** A person is accepted only if their name literally appears in the fetched search text and the cited source URL is one we fetched. Guessed emails are labelled `guessed` and capped at 0.7 confidence.
 * **LLM output is never trusted.** Strict JSON, validated; one retry; then a deterministic template pitch. Web text is passed to the model as marked data.

@@ -12,6 +12,6 @@
 | 1:55 | Wait for the follow-up (2 min in demo mode); show it arriving **in the same thread** | "Follow-up is scheduled by scanning the Sheet, not a long Wait node." |
 | 2:15 | Run it for `Swiggy`/`Bengaluru`, then reply to that email from the sandbox inbox; run workflow 03 | "A reply cancels the follow-up and marks the lead REPLIED." |
 | 2:40 | Send `Find event leads for Xqzvbnm Holdings in Pune` and `Apple in Gurgaon` | "Fake company -> NOT_FOUND. Ambiguous or no qualifying contact -> NEEDS_REVIEW. Nothing is sent." |
-| 2:55 | Show `make test` passing | "68 tests, including the failure paths." |
+| 2:55 | Show `make test` passing | "72 tests, including the failure paths." |
 
 Tip: do a dry run first so Tavily/Gemini quota is not wasted on retakes (each lead uses ~3-4 searches and 2 Gemini calls).

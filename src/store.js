@@ -13,6 +13,15 @@ const COLS = ['request_id', 'created_at', 'company', 'city', 'source', 'requeste
 const DEFAULT_CONFIG = { sandbox_mode: 'true', sandbox_inbox: '', followup_delay_minutes: '2', min_confidence: '0.6',
   duplicate_window_days: '30', max_attempts: '3', sender_name: '' };
 
+const CONFIG_HELP = {
+  sandbox_mode: 'true = every email goes to sandbox_inbox, never to the real lead',
+  sandbox_inbox: 'Test inbox that receives all outreach in sandbox mode (overrides .env if filled)',
+  followup_delay_minutes: 'Demo: 2. Production: 4320 (3 days)',
+  min_confidence: 'Below this the lead goes to NEEDS_REVIEW instead of being sent',
+  duplicate_window_days: 'Same company+city within this window is marked DUPLICATE',
+  max_attempts: 'Attempts before a lead is marked FAILED',
+  sender_name: 'Name used to sign outreach emails' };
+const ACTIVITY_COLS = ['timestamp', 'request_id', 'step', 'level', 'message'];
 const blank = () => Object.fromEntries(COLS.map((c) => [c, '']));
 const pad = (n) => String(n).padStart(4, '0');
 function nextIdFrom(rows) {
@@ -136,6 +145,28 @@ class SheetsStore {
     }
     if (data.length) await this._api('POST', '/values:batchUpdate', { valueInputOption: 'RAW', data });
     return n;
+  }
+  // Idempotent first-run setup: creates the three tabs, writes headers into empty ones, seeds Config.
+  async ensureSchema() {
+    const want = { Leads: COLS, Activity_log: ACTIVITY_COLS, Config: ['key', 'value', 'description'] };
+    const meta = await this._api('GET', '?fields=sheets.properties.title');
+    const have = new Set((meta.sheets || []).map((x) => x.properties.title));
+    const created = Object.keys(want).filter((t) => !have.has(t));
+    if (created.length) await this._api('POST', ':batchUpdate', { requests: created.map((title) => ({ addSheet: { properties: { title } } })) });
+    const headers = []; const missing = [];
+    for (const [t, cols] of Object.entries(want)) {
+      const d = await this._api('GET', '/values/' + encodeURIComponent(t + '!A1:AZ1'));
+      const row = (d.values && d.values[0]) || [];
+      if (!row.length) { await this._api('PUT', '/values/' + encodeURIComponent(t + '!A1') + '?valueInputOption=RAW', { values: [cols] }); headers.push(t); }
+      else if (t === 'Leads') for (const c of cols) if (!row.map((x) => String(x).trim()).includes(c)) missing.push(c);
+    }
+    const cfg = await this._api('GET', '/values/' + encodeURIComponent('Config!A2:C100'));
+    let seeded = false;
+    if (!(cfg.values || []).length) {
+      await this._api('POST', '/values/' + encodeURIComponent('Config!A1') + ':append?valueInputOption=RAW&insertDataOption=INSERT_ROWS', { values: Object.entries(DEFAULT_CONFIG).map(([k, v]) => [k, v, CONFIG_HELP[k] || '']) });
+      seeded = true;
+    }
+    return { created, headers, seeded, missing_columns: missing };
   }
   async getConfig() {
     const d = await this._api('GET', '/values/' + encodeURIComponent('Config!A2:B100')); const o = {};

@@ -2,7 +2,7 @@
 
 Run on 2026-11-15 against live Gemini, Tavily and Telegram, with a real n8n 2.47 in Docker.
 
-## 1. Automated tests: 68 passing (`make test`, no network, no quota)
+## 1. Automated tests: 72 passing (`make test`, no network, no quota)
 
 | Area | What is checked |
 |---|---|

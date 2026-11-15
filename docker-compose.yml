@@ -39,6 +39,7 @@ services:
       - SANDBOX_MODE
       - SANDBOX_INBOX
       - ALLOW_REAL_SEND
+      - SEND_ALLOWLIST
       - FOLLOWUP_DELAY_MINUTES
     volumes:
       - ./n8n_data:/home/node/.n8n
