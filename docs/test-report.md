@@ -29,7 +29,7 @@ Run on 2026-11-15 against live Gemini, Tavily and Telegram, with a real n8n 2.47
 | Workflow | Verified |
 |---|---|
 | 02 Lead processor | Full run from a Sheet-style row to `SENT`; resend path after a refused send (no new API calls) |
-| 03 Follow-up scheduler | Follow-up sent in the same thread; a simulated reply set `REPLIED` and no follow-up was sent |
+| 03 Follow-up scheduler | Follow-up sent in the same thread; a **real reply** from the sandbox inbox (LD-0007, Paytm) cancelled the follow-up and set `REPLIED`, with a Telegram hand-off message |
 | 01 Telegram intake | Queues real Telegram commands, answers duplicates, and handles Approve / Reject taps |
 | 99 Error alerts | Fired for real: a deliberately failing active workflow triggered it 0.1 s later, which messaged Telegram |
 
@@ -56,7 +56,6 @@ Run on 2026-11-15 against live Gemini, Tavily and Telegram, with a real n8n 2.47
 
 ## 6. NOT yet verified (be upfront about these)
 
-* **A live reply cancelling a follow-up** (`REPLIED`). Covered by unit tests and an earlier simulated reply in n8n, but not yet with a real reply from the sandbox inbox.
 * **Real email delivery to a real lead.** Intentionally never done: every send is locked to two test addresses.
 * **Email deliverability of guessed addresses**, which cannot be checked without a paid verifier.
 * **Gmail test-mode token** expires after 7 days; re-run `node scripts/gmail_auth.js` if it lapses.
